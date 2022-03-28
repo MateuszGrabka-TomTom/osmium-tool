@@ -35,6 +35,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <osmium/memory/buffer.hpp>
 #include <osmium/osm/entity_bits.hpp>
 #include <osmium/osm/object.hpp>
+#include <osmium/osm/node.hpp>
 #include <osmium/util/verbose_output.hpp>
 
 #include <boost/program_options.hpp>
@@ -218,6 +219,50 @@ namespace {
 
 } // anonymous namespace
 
+inline std::unique_ptr<osmium::Location> merge_locations(std::vector<QueueElement>& duplicates) {
+    const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
+
+    for(std::size_t i = 1; i < duplicates.size(); ++i) {
+        const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
+
+        if (node_0->location() != node_i->location()) {
+            return std::unique_ptr<osmium::Location>{};
+        } 
+    }
+
+    osmium::Location location = node_0->location();
+
+    return std::unique_ptr<osmium::Location>(new osmium::Location{location.x(), location.y()});
+}
+
+inline std::vector<const osmium::OSMObject*> merge(std::vector<QueueElement>& duplicates) {    
+    std::vector<const osmium::OSMObject*> deduplicated;
+    
+    const osmium::OSMObject* first = &duplicates.front().object();
+    
+    if (first->type() == osmium::item_type::node) {
+        std::unique_ptr<osmium::Location> merged_location = merge_locations(duplicates);
+        
+        if (merged_location) {
+            deduplicated.push_back(&duplicates.front().object());
+        } else {
+            for(std::size_t i = 0; i < duplicates.size(); ++i) {
+                deduplicated.push_back(&duplicates[i].object());
+            }
+        }
+    }
+
+    return deduplicated;
+}
+
+inline void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer) {
+    std::vector<const osmium::OSMObject*> merged = merge(duplicates);
+
+    for(std::size_t i = 0; i < merged.size(); ++i) {
+        (*writer)(*merged[i]);
+    }
+}
+
 bool CommandMerge::run() {
     m_vout << "Opening output file...\n";
     osmium::io::Header header;
@@ -250,19 +295,65 @@ bool CommandMerge::run() {
             ++index;
         }
 
+        std::vector<QueueElement> duplicates;
+
         int n = 0;
         while (!queue.empty()) {
             const auto element = queue.top();
             queue.pop();
-            if (queue.empty() || element != queue.top()) {
-                writer(element.object());
-            }
 
-            const int index = element.data_source_index();
-            if (data_sources[index].next()) {
-                queue.emplace(data_sources[index].get(), index);
-            }
+            const osmium::OSMObject& obj = element.object();
 
+            if (!queue.empty()) { 
+                const osmium::OSMObject& next_obj = queue.top().object();
+
+                if (obj.id() == next_obj.id() && obj.type() == next_obj.type()) {
+                    duplicates.push_back(element);
+                } else {
+                    if (!duplicates.empty()) {
+                        duplicates.push_back(element);
+                        deduplicate_and_write(duplicates, &writer);
+                        
+                        for(std::size_t i = 0; i < duplicates.size(); ++i) {
+                            const int index = duplicates[i].data_source_index();
+                            if (data_sources[index].next()) {
+                                queue.emplace(data_sources[index].get(), index);
+                            }
+                        }
+
+                        duplicates.clear();
+                    } else {
+                        writer(obj);
+
+                        const int index = element.data_source_index();
+                        if (data_sources[index].next()) {
+                            queue.emplace(data_sources[index].get(), index);
+                        }
+                    }
+                }
+            } else {
+                if (duplicates.empty()) {
+                    writer(obj);
+
+                    const int index = element.data_source_index();
+                    if (data_sources[index].next()) {
+                        queue.emplace(data_sources[index].get(), index);
+                    }
+                } else {
+                    duplicates.push_back(element);
+                    deduplicate_and_write(duplicates, &writer);
+
+                    for(std::size_t i = 0; i < duplicates.size(); ++i) {
+                        const int index = duplicates[i].data_source_index();
+                        if (data_sources[index].next()) {
+                            queue.emplace(data_sources[index].get(), index);
+                        }
+                    }
+
+                    duplicates.clear();
+                }
+            }
+        
             if (n++ > 10000) {
                 n = 0;
                 progress_bar.update(std::accumulate(data_sources.cbegin(), data_sources.cend(), static_cast<std::size_t>(0), [](std::size_t sum, const DataSource& source){
