@@ -49,6 +49,7 @@ bool CommandCheckRefs::setup(const std::vector<std::string>& arguments) {
     opts_cmd.add_options()
     ("show-ids,i", "Show IDs of missing objects")
     ("check-relations,r", "Also check relations")
+    ("print-duplicated-ids,d", "Print all duplicates")
     ;
 
     po::options_description opts_common{add_common_options()};
@@ -86,6 +87,10 @@ bool CommandCheckRefs::setup(const std::vector<std::string>& arguments) {
         m_check_relations = true;
     }
 
+    if (vm.count("print-duplicated-ids")) {
+        m_print_duplicates = true;
+    }
+
     return true;
 }
 
@@ -94,6 +99,7 @@ void CommandCheckRefs::show_arguments() {
     m_vout << "  other options:\n";
     m_vout << "    show ids: " << yes_no(m_show_ids);
     m_vout << "    check relations: " << yes_no(m_check_relations);
+    m_vout << "    print duplicated ids: " << yes_no(m_print_duplicates);
 }
 
 class RefCheckHandler : public osmium::handler::Handler {
@@ -102,8 +108,6 @@ class RefCheckHandler : public osmium::handler::Handler {
     osmium::nwr_array<osmium::index::IdSetDense<osmium::unsigned_object_id_type>> m_idset_neg;
 
     std::vector<std::pair<osmium::object_id_type, osmium::object_id_type>> m_relation_refs;
-
-    osmium::handler::CheckOrder m_check_order;
 
     uint64_t m_node_count = 0;
     uint64_t m_way_count = 0;
@@ -115,6 +119,7 @@ class RefCheckHandler : public osmium::handler::Handler {
 
     osmium::VerboseOutput* m_vout;
     osmium::ProgressBar* m_progress_bar;
+    osmium::handler::CheckOrder m_check_order;
     bool m_show_ids;
     bool m_check_relations;
 
@@ -128,9 +133,10 @@ class RefCheckHandler : public osmium::handler::Handler {
 
 public:
 
-    RefCheckHandler(osmium::VerboseOutput* vout, osmium::ProgressBar* progress_bar, bool show_ids, bool check_relations) :
+    RefCheckHandler(osmium::VerboseOutput* vout, osmium::ProgressBar* progress_bar, bool show_ids, bool check_relations, bool print_duplicates) :
         m_vout(vout),
         m_progress_bar(progress_bar),
+        m_check_order(init_check_order_handler(print_duplicates)),
         m_show_ids(show_ids),
         m_check_relations(check_relations) {
         assert(vout);
@@ -277,12 +283,20 @@ public:
                m_relation_refs.capacity() * sizeof(decltype(m_relation_refs)::value_type);
     }
 
+private:
+ 
+    osmium::handler::CheckOrder init_check_order_handler(bool print_duplicates) {
+        return print_duplicates
+            ? osmium::handler::CheckOrder(osmium::handler::duplicate_handling::PRINT)
+            : osmium::handler::CheckOrder(osmium::handler::duplicate_handling::THROW_EXCEPTION);
+    }
+
 }; // class RefCheckHandler
 
 bool CommandCheckRefs::run() {
     osmium::io::Reader reader{m_input_file};
     osmium::ProgressBar progress_bar{reader.file_size(), display_progress()};
-    RefCheckHandler handler{&m_vout, &progress_bar, m_show_ids, m_check_relations};
+    RefCheckHandler handler{&m_vout, &progress_bar, m_show_ids, m_check_relations, m_print_duplicates};
 
     while (osmium::memory::Buffer buffer = reader.read()) {
         progress_bar.update(reader.offset());
