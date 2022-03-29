@@ -25,6 +25,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "exception.hpp"
 #include "util.hpp"
 
+#include <osmium/builder/osm_object_builder.hpp>
 #include <osmium/io/file.hpp>
 #include <osmium/io/header.hpp>
 #include <osmium/io/input_iterator.hpp>
@@ -235,6 +236,37 @@ inline std::unique_ptr<osmium::Location> merge_locations(std::vector<QueueElemen
     return std::unique_ptr<osmium::Location>(new osmium::Location{location.x(), location.y()});
 }
 
+inline std::unique_ptr<osmium::builder::TagListBuilder> merge_tags(std::vector<QueueElement>& duplicates) {
+    std::map<std::string, std::string> merged_tags{};
+    std::map<std::string, std::string>::iterator it;
+
+    for(std::size_t i = 0; i < duplicates.size(); ++i) {
+        const osmium::TagList& tags = duplicates[i].object().tags();
+
+        for (auto tag_it = tags.begin(); tag_it != tags.end(); ++tag_it) {
+            const osmium::Tag& tag = *tag_it;
+
+            std::string key = tag.key();
+            it = merged_tags.find(key);
+            
+            if (it == merged_tags.end()) {
+                merged_tags.insert({tag.key(), tag.value()});
+            } else if (tag.value() != it->second) {
+                return std::unique_ptr<osmium::builder::TagListBuilder>{};
+            }
+        }
+    }
+
+    osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
+    std::unique_ptr<osmium::builder::TagListBuilder> builder{new osmium::builder::TagListBuilder(buffer)};
+
+    for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
+        builder->add_tag(it->first, it->second);
+    }
+
+    return builder;
+}
+
 inline std::vector<const osmium::OSMObject*> merge(std::vector<QueueElement>& duplicates) {    
     std::vector<const osmium::OSMObject*> deduplicated;
     
@@ -242,8 +274,9 @@ inline std::vector<const osmium::OSMObject*> merge(std::vector<QueueElement>& du
     
     if (first->type() == osmium::item_type::node) {
         std::unique_ptr<osmium::Location> merged_location = merge_locations(duplicates);
+        std::unique_ptr<osmium::builder::TagListBuilder> merged_tags = merge_tags(duplicates);
         
-        if (merged_location) {
+        if (merged_location && merged_tags) {
             deduplicated.push_back(&duplicates.front().object());
         } else {
             for(std::size_t i = 0; i < duplicates.size(); ++i) {
