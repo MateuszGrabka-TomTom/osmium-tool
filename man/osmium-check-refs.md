@@ -23,6 +23,11 @@ If the option **\--check-relations/-r** is not given, this command will only
 check if all nodes referenced in ways are in the file, with the option,
 relations will also be checked.
 
+Referential integrity check stops exceptionally when any ID duplication (two 
+Nodes, Ways or Relations with the same ID) is detected. In case you want to 
+print both referential integrity and ID duplication issues, you can use
+**\--print-duplicated-ids/-r** option.
+
 This command expects the input file to be ordered in the usual way: First
 nodes in order of ID, then ways in order of ID, then relations in order of ID.
 Negative IDs are allowed, they must be ordered before the positive IDs. See
@@ -43,6 +48,10 @@ This commands reads its input file only once, ie. it can read from STDIN.
 :   Also check referential integrity of relations. Without this option, only
     nodes in ways are checked.
 
+-d, \--print-duplicated-ids
+:   Print all ID duplicates (two Nodes, Ways or Relations with the same ID).
+    Without this option, exception is thrown when first duplicate is detected.
+    
 @MAN_COMMON_OPTIONS@
 @MAN_PROGRESS_OPTIONS@
 @MAN_INPUT_OPTIONS@
