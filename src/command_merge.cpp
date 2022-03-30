@@ -220,23 +220,30 @@ namespace {
 
 } // anonymous namespace
 
-inline std::unique_ptr<osmium::Location> merge_locations(std::vector<QueueElement>& duplicates) {
+inline void merge_locations(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates) {
     const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
 
     for(std::size_t i = 1; i < duplicates.size(); ++i) {
         const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
 
         if (node_0->location() != node_i->location()) {
-            return std::unique_ptr<osmium::Location>{};
+            node_builder.release();
+            return;
         } 
     }
 
-    osmium::Location location = node_0->location();
-
-    return std::unique_ptr<osmium::Location>(new osmium::Location{location.x(), location.y()});
+    const auto& builder = node_builder.get();
+    builder->set_id(node_0->id());
+    builder->set_visible(node_0->visible());
+    builder->set_version(node_0->version());
+    builder->set_changeset(node_0->changeset());
+    builder->set_uid(node_0->uid());
+    builder->set_timestamp(node_0->timestamp());
+    builder->set_location(node_0->location());
+    builder->set_user(node_0->user());
 }
 
-inline std::unique_ptr<osmium::builder::TagListBuilder> merge_tags(std::vector<QueueElement>& duplicates) {
+inline void merge_tags(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates) {
     std::map<std::string, std::string> merged_tags{};
     std::map<std::string, std::string>::iterator it;
 
@@ -252,32 +259,36 @@ inline std::unique_ptr<osmium::builder::TagListBuilder> merge_tags(std::vector<Q
             if (it == merged_tags.end()) {
                 merged_tags.insert({tag.key(), tag.value()});
             } else if (tag.value() != it->second) {
-                return std::unique_ptr<osmium::builder::TagListBuilder>{};
+                node_builder.release();
+                return;
             }
         }
     }
 
-    osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
-    std::unique_ptr<osmium::builder::TagListBuilder> builder{new osmium::builder::TagListBuilder(buffer)};
+    
+    osmium::builder::TagListBuilder builder{*node_builder};
 
     for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
-        builder->add_tag(it->first, it->second);
+        builder.add_tag(it->first, it->second);
     }
-
-    return builder;
 }
 
-inline std::vector<const osmium::OSMObject*> merge(std::vector<QueueElement>& duplicates) {    
+inline void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer) {
     std::vector<const osmium::OSMObject*> deduplicated;
     
     const osmium::OSMObject* first = &duplicates.front().object();
     
     if (first->type() == osmium::item_type::node) {
-        std::unique_ptr<osmium::Location> merged_location = merge_locations(duplicates);
-        std::unique_ptr<osmium::builder::TagListBuilder> merged_tags = merge_tags(duplicates);
+        osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
+        std::unique_ptr<osmium::builder::NodeBuilder> node_builder{new osmium::builder::NodeBuilder{buffer}};
+
+        merge_locations(node_builder, duplicates);
+        if (node_builder) {
+            merge_tags(node_builder, duplicates);
+        }
         
-        if (merged_location && merged_tags) {
-            deduplicated.push_back(&duplicates.front().object());
+        if (node_builder) {
+            (*writer)(buffer.get<osmium::Node>(buffer.commit()));
         } else {
             for(std::size_t i = 0; i < duplicates.size(); ++i) {
                 deduplicated.push_back(&duplicates[i].object());
@@ -285,14 +296,8 @@ inline std::vector<const osmium::OSMObject*> merge(std::vector<QueueElement>& du
         }
     }
 
-    return deduplicated;
-}
-
-inline void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer) {
-    std::vector<const osmium::OSMObject*> merged = merge(duplicates);
-
-    for(std::size_t i = 0; i < merged.size(); ++i) {
-        (*writer)(*merged[i]);
+    for(std::size_t i = 0; i < deduplicated.size(); ++i) {
+        (*writer)(*deduplicated[i]);
     }
 }
 
