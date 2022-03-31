@@ -41,6 +41,9 @@ STDOUT.
 :   Do not warn when there are multiple versions of the same object in the
     input files.
 
+-C, \--conflicts-output
+:   Report conflicts to the given output.
+
 @MAN_COMMON_OPTIONS@
 @MAN_PROGRESS_OPTIONS@
 @MAN_INPUT_OPTIONS@

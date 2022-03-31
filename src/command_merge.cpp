@@ -53,6 +53,7 @@ bool CommandMerge::setup(const std::vector<std::string>& arguments) {
     po::options_description opts_cmd{"COMMAND OPTIONS"};
     opts_cmd.add_options()
     ("with-history,H", "Do not warn about input files with multiple object versions")
+    ("conflicts-output,C", po::value<std::string>(), "Report conflicts to the given output")
     ;
 
     po::options_description opts_common{add_common_options()};
@@ -87,7 +88,11 @@ bool CommandMerge::setup(const std::vector<std::string>& arguments) {
     if (vm.count("with-history")) {
         m_with_history = true;
     }
-
+    
+    if (vm.count("conflicts-output")) {
+        m_conflicts_output = vm["conflicts-output"].as<std::string>();
+    }
+    
     return true;
 }
 
@@ -184,43 +189,9 @@ namespace {
 
     }; // DataSource
 
-    class QueueElement {
-
-        const osmium::OSMObject* m_object;
-        int m_data_source_index;
-
-    public:
-
-        QueueElement(const osmium::OSMObject* object, int data_source_index) noexcept :
-            m_object(object),
-            m_data_source_index(data_source_index) {
-        }
-
-        const osmium::OSMObject& object() const noexcept {
-            return *m_object;
-        }
-
-        int data_source_index() const noexcept {
-            return m_data_source_index;
-        }
-
-    }; // QueueElement
-
-    bool operator<(const QueueElement& lhs, const QueueElement& rhs) noexcept {
-        return lhs.object() > rhs.object();
-    }
-
-    bool operator==(const QueueElement& lhs, const QueueElement& rhs) noexcept {
-        return lhs.object() == rhs.object();
-    }
-
-    bool operator!=(const QueueElement& lhs, const QueueElement& rhs) noexcept {
-        return !(lhs == rhs);
-    }
-
 } // anonymous namespace
 
-inline void merge_locations(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates) {
+void CommandMerge::merge_locations(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates) {
     const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
 
     for(std::size_t i = 1; i < duplicates.size(); ++i) {
@@ -243,7 +214,7 @@ inline void merge_locations(std::unique_ptr<osmium::builder::NodeBuilder>& node_
     builder->set_user(node_0->user());
 }
 
-inline void merge_tags(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates) {
+void CommandMerge::merge_tags(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates) {
     std::map<std::string, std::string> merged_tags{};
     std::map<std::string, std::string>::iterator it;
 
@@ -259,6 +230,7 @@ inline void merge_tags(std::unique_ptr<osmium::builder::NodeBuilder>& node_build
             if (it == merged_tags.end()) {
                 merged_tags.insert({tag.key(), tag.value()});
             } else if (tag.value() != it->second) {
+                report_conflict("Locations are not equal");
                 node_builder.release();
                 return;
             }
@@ -273,7 +245,7 @@ inline void merge_tags(std::unique_ptr<osmium::builder::NodeBuilder>& node_build
     }
 }
 
-inline void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer) {
+void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer) {
     std::vector<const osmium::OSMObject*> deduplicated;
     
     const osmium::OSMObject* first = &duplicates.front().object();
@@ -322,8 +294,18 @@ bool CommandMerge::run() {
 
         std::priority_queue<QueueElement> queue;
 
+        std::string index_to_data_source_log;
+
         int index = 0;
         for (const osmium::io::File& file : m_input_files) {
+            if (index != 0) {
+                index_to_data_source_log += ";";
+            }
+
+            index_to_data_source_log += std::to_string(index);
+            index_to_data_source_log += ";";
+            index_to_data_source_log += file.filename();
+
             data_sources.emplace_back(file, m_with_history);
 
             if (!data_sources.back().empty()) {
@@ -332,6 +314,8 @@ bool CommandMerge::run() {
 
             ++index;
         }
+
+        report_conflict(index_to_data_source_log);
 
         std::vector<QueueElement> duplicates;
 

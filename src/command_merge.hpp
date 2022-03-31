@@ -25,12 +25,58 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "cmd.hpp" // IWYU pragma: export
 
+#include <osmium/builder/osm_object_builder.hpp>
+#include <osmium/osm/node.hpp>
+#include <osmium/io/writer.hpp>
+
+#include <iostream>
+#include <fstream>
 #include <string>
 #include <vector>
+#include <stdio.h>
+
+namespace {
+    class QueueElement {
+
+        const osmium::OSMObject* m_object;
+        int m_data_source_index;
+
+    public:
+
+        QueueElement(const osmium::OSMObject* object, int data_source_index) noexcept :
+            m_object(object),
+            m_data_source_index(data_source_index) {
+        }
+
+        const osmium::OSMObject& object() const noexcept {
+            return *m_object;
+        }
+
+        int data_source_index() const noexcept {
+            return m_data_source_index;
+        }
+
+    }; // QueueElement
+
+    bool operator<(const QueueElement& lhs, const QueueElement& rhs) noexcept {
+        return lhs.object() > rhs.object();
+    }
+
+    bool operator==(const QueueElement& lhs, const QueueElement& rhs) noexcept {
+        return lhs.object() == rhs.object();
+    }
+
+    bool operator!=(const QueueElement& lhs, const QueueElement& rhs) noexcept {
+        return !(lhs == rhs);
+    }
+}
 
 class CommandMerge : public CommandWithMultipleOSMInputs, public with_osm_output {
 
     bool m_with_history = false;
+    std::string m_conflicts_output;
+    bool m_conflicts_output_cleaned_up = false;
+
 
 public:
 
@@ -50,6 +96,28 @@ public:
 
     const char* synopsis() const noexcept override final {
         return "osmium merge [OPTIONS] OSM-FILE...";
+    }
+
+    void merge_locations(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates);
+    void merge_tags(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates);
+    void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer);
+
+private:
+
+
+    void report_conflict(std::string message) {
+
+        if (!m_conflicts_output.empty() && !m_conflicts_output_cleaned_up) {
+            std::ofstream log;
+            log.open(m_conflicts_output, std::ios_base::trunc | std::ios_base::out);
+            log.close();
+            m_conflicts_output_cleaned_up = true;
+        }
+
+        if (!m_conflicts_output.empty()) {
+            std::ofstream log(m_conflicts_output.c_str(), std::ios_base::app | std::ios_base::out);
+            log << message << std::endl;
+        }
     }
 
 }; // class CommandMerge
