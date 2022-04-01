@@ -74,6 +74,7 @@ namespace {
 class CommandMerge : public CommandWithMultipleOSMInputs, public with_osm_output {
 
     bool m_with_history = false;
+    bool m_use_new_conflict_resolution_strategy = false;
     std::string m_conflicts_output;
     bool m_conflicts_output_cleaned_up = false;
 

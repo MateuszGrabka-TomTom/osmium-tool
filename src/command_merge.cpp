@@ -54,6 +54,7 @@ bool CommandMerge::setup(const std::vector<std::string>& arguments) {
     opts_cmd.add_options()
     ("with-history,H", "Do not warn about input files with multiple object versions")
     ("conflicts-output,C", po::value<std::string>(), "Report conflicts to the given output")
+    ("new-conflict-resolution-strategy,N", "Use new conflict resolution strategy")
     ;
 
     po::options_description opts_common{add_common_options()};
@@ -89,6 +90,10 @@ bool CommandMerge::setup(const std::vector<std::string>& arguments) {
         m_with_history = true;
     }
     
+    if (vm.count("new-conflict-resolution-strategy")) {
+        m_use_new_conflict_resolution_strategy = true;
+    }
+
     if (vm.count("conflicts-output")) {
         m_conflicts_output = vm["conflicts-output"].as<std::string>();
     }
@@ -211,14 +216,14 @@ void CommandMerge::report_conflict_on_versions(std::vector<QueueElement>& duplic
         const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
 
         if (node_0->version() != node_i->version()) {
-            std::string conflict_details = "0005;n;";
+            std::string conflict_details = "003;n;";
             conflict_details += std::to_string(node_0->id());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[0].data_source_index());
             conflict_details += ";";
             conflict_details += std::to_string(duplicates[i].data_source_index());
             conflict_details += ";";
             conflict_details += std::to_string(node_0->version());
-            conflict_details += ";";
-            conflict_details += std::to_string(duplicates[i].data_source_index());
             conflict_details += ";";
             conflict_details += std::to_string(node_i->version());
             report_conflict(conflict_details);
@@ -233,7 +238,7 @@ void CommandMerge::report_conflict_on_locations(std::vector<QueueElement>& dupli
         const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
 
         if (node_0->version() == node_i->version() && node_0->location() != node_i->location()) {
-            std::string conflict_details = "0001;n;";
+            std::string conflict_details = "001;n;";
             conflict_details += std::to_string(node_0->id());
             conflict_details += ";";
             conflict_details += std::to_string(duplicates[0].data_source_index());
@@ -260,14 +265,14 @@ void CommandMerge::merge_tags(osmium::builder::NodeBuilder& node_builder, std::v
             if (it == merged_tags.end()) {
                 merged_tags.insert({tag.key(), tag.value()});
             } else if (tag.value() != it->second) {
-                std::string conflict_details = "0002;n;";
+                std::string conflict_details = "002;n;";
                 conflict_details += std::to_string(duplicates[0].object().id());
                 conflict_details += ";";
                 conflict_details += std::to_string(duplicates[0].data_source_index());
                 conflict_details += ";";
-                conflict_details += tag.key();
-                conflict_details += ";";
                 conflict_details += std::to_string(duplicates[i].data_source_index());
+                conflict_details += ";";
+                conflict_details += tag.key();
                 report_conflict(conflict_details);
             }
         }
@@ -350,28 +355,58 @@ bool CommandMerge::run() {
 
             ++index;
         }
+        
+        if (m_use_new_conflict_resolution_strategy) {
+            report_conflict(index_to_data_source_log);
 
-        report_conflict(index_to_data_source_log);
+            std::vector<QueueElement> duplicates;
 
-        std::vector<QueueElement> duplicates;
+            int n = 0;
+            while (!queue.empty()) {
+                const auto element = queue.top();
+                queue.pop();
 
-        int n = 0;
-        while (!queue.empty()) {
-            const auto element = queue.top();
-            queue.pop();
+                const osmium::OSMObject& obj = element.object();
 
-            const osmium::OSMObject& obj = element.object();
+                if (!queue.empty()) { 
+                    const osmium::OSMObject& next_obj = queue.top().object();
 
-            if (!queue.empty()) { 
-                const osmium::OSMObject& next_obj = queue.top().object();
+                    if (obj.id() == next_obj.id() && obj.type() == next_obj.type()) {
+                        duplicates.push_back(element);
+                    } else {
+                        if (!duplicates.empty()) {
+                            duplicates.push_back(element);
+                            deduplicate_and_write(duplicates, &writer);
+                            
+                            for(std::size_t i = 0; i < duplicates.size(); ++i) {
+                                const int index = duplicates[i].data_source_index();
+                                if (data_sources[index].next()) {
+                                    queue.emplace(data_sources[index].get(), index);
+                                }
+                            }
 
-                if (obj.id() == next_obj.id() && obj.type() == next_obj.type()) {
-                    duplicates.push_back(element);
+                            duplicates.clear();
+                        } else {
+                            writer(obj);
+
+                            const int index = element.data_source_index();
+                            if (data_sources[index].next()) {
+                                queue.emplace(data_sources[index].get(), index);
+                            }
+                        }
+                    }
                 } else {
-                    if (!duplicates.empty()) {
+                    if (duplicates.empty()) {
+                        writer(obj);
+
+                        const int index = element.data_source_index();
+                        if (data_sources[index].next()) {
+                            queue.emplace(data_sources[index].get(), index);
+                        }
+                    } else {
                         duplicates.push_back(element);
                         deduplicate_and_write(duplicates, &writer);
-                        
+
                         for(std::size_t i = 0; i < duplicates.size(); ++i) {
                             const int index = duplicates[i].data_source_index();
                             if (data_sources[index].next()) {
@@ -380,45 +415,40 @@ bool CommandMerge::run() {
                         }
 
                         duplicates.clear();
-                    } else {
-                        writer(obj);
-
-                        const int index = element.data_source_index();
-                        if (data_sources[index].next()) {
-                            queue.emplace(data_sources[index].get(), index);
-                        }
                     }
                 }
-            } else {
-                if (duplicates.empty()) {
-                    writer(obj);
-
-                    const int index = element.data_source_index();
-                    if (data_sources[index].next()) {
-                        queue.emplace(data_sources[index].get(), index);
-                    }
-                } else {
-                    duplicates.push_back(element);
-                    deduplicate_and_write(duplicates, &writer);
-
-                    for(std::size_t i = 0; i < duplicates.size(); ++i) {
-                        const int index = duplicates[i].data_source_index();
-                        if (data_sources[index].next()) {
-                            queue.emplace(data_sources[index].get(), index);
-                        }
-                    }
-
-                    duplicates.clear();
+            
+                if (n++ > 10000) {
+                    n = 0;
+                    progress_bar.update(std::accumulate(data_sources.cbegin(), data_sources.cend(), static_cast<std::size_t>(0), [](std::size_t sum, const DataSource& source){
+                        return sum + source.offset();
+                    }));
                 }
             }
-        
-            if (n++ > 10000) {
-                n = 0;
-                progress_bar.update(std::accumulate(data_sources.cbegin(), data_sources.cend(), static_cast<std::size_t>(0), [](std::size_t sum, const DataSource& source){
-                    return sum + source.offset();
-                }));
+        } else {
+            int n = 0;
+            while (!queue.empty()) {
+                const auto element = queue.top();
+                queue.pop();
+                if (queue.empty() || element != queue.top()) {
+                    writer(element.object());
+                }
+
+                const int index = element.data_source_index();
+                if (data_sources[index].next()) {
+                    queue.emplace(data_sources[index].get(), index);
+                }
+
+                if (n++ > 10000) {
+                    n = 0;
+                    progress_bar.update(std::accumulate(data_sources.cbegin(), data_sources.cend(), static_cast<std::size_t>(0), [](std::size_t sum, const DataSource& source){
+                        return sum + source.offset();
+                    }));
+                }
             }
         }
+
+        
     }
 
     m_vout << "Closing output file...\n";
