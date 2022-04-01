@@ -98,15 +98,16 @@ public:
         return "osmium merge [OPTIONS] OSM-FILE...";
     }
 
-    void merge_locations(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates);
-    void merge_tags(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates);
+    void init_builder(osmium::builder::NodeBuilder& node_builder, const osmium::OSMObject* first);
+    void report_conflict_on_versions(std::vector<QueueElement>& duplicates);
+    void report_conflict_on_locations(std::vector<QueueElement>& duplicates);
+    void merge_tags(osmium::builder::NodeBuilder& node_builder, std::vector<QueueElement>& duplicates);
     void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer);
 
 private:
 
 
     void report_conflict(std::string message) {
-
         if (!m_conflicts_output.empty() && !m_conflicts_output_cleaned_up) {
             std::ofstream log;
             log.open(m_conflicts_output, std::ios_base::trunc | std::ios_base::out);
@@ -115,7 +116,7 @@ private:
         }
 
         if (!m_conflicts_output.empty()) {
-            std::ofstream log(m_conflicts_output.c_str(), std::ios_base::app | std::ios_base::out);
+            std::ofstream log(m_conflicts_output, std::ios_base::app | std::ios_base::out);
             log << message << std::endl;
         }
     }

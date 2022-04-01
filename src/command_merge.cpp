@@ -191,30 +191,60 @@ namespace {
 
 } // anonymous namespace
 
-void CommandMerge::merge_locations(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates) {
+void CommandMerge::init_builder(osmium::builder::NodeBuilder& node_builder, const osmium::OSMObject* first) {
+    const osmium::Node* node = static_cast<const osmium::Node*>(first);
+
+    node_builder.set_id(node->id());
+    node_builder.set_visible(node->visible());
+    node_builder.set_version(node->version());
+    node_builder.set_changeset(node->changeset());
+    node_builder.set_uid(node->uid());
+    node_builder.set_timestamp(node->timestamp());
+    node_builder.set_location(node->location());
+    node_builder.set_user(node->user());
+}
+
+void CommandMerge::report_conflict_on_versions(std::vector<QueueElement>& duplicates) {
     const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
 
     for(std::size_t i = 1; i < duplicates.size(); ++i) {
         const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
 
-        if (node_0->location() != node_i->location()) {
-            node_builder.release();
-            return;
+        if (node_0->version() != node_i->version()) {
+            std::string conflict_details = "0005;n;";
+            conflict_details += std::to_string(node_0->id());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[i].data_source_index());
+            conflict_details += ";";
+            conflict_details += std::to_string(node_0->version());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[i].data_source_index());
+            conflict_details += ";";
+            conflict_details += std::to_string(node_i->version());
+            report_conflict(conflict_details);
         } 
     }
-
-    const auto& builder = node_builder.get();
-    builder->set_id(node_0->id());
-    builder->set_visible(node_0->visible());
-    builder->set_version(node_0->version());
-    builder->set_changeset(node_0->changeset());
-    builder->set_uid(node_0->uid());
-    builder->set_timestamp(node_0->timestamp());
-    builder->set_location(node_0->location());
-    builder->set_user(node_0->user());
 }
 
-void CommandMerge::merge_tags(std::unique_ptr<osmium::builder::NodeBuilder>& node_builder, std::vector<QueueElement>& duplicates) {
+void CommandMerge::report_conflict_on_locations(std::vector<QueueElement>& duplicates) {
+    const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
+
+    for(std::size_t i = 1; i < duplicates.size(); ++i) {
+        const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
+
+        if (node_0->version() == node_i->version() && node_0->location() != node_i->location()) {
+            std::string conflict_details = "0001;n;";
+            conflict_details += std::to_string(node_0->id());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[0].data_source_index());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[i].data_source_index());
+            report_conflict(conflict_details);
+        } 
+    }
+}
+
+void CommandMerge::merge_tags(osmium::builder::NodeBuilder& node_builder, std::vector<QueueElement>& duplicates) {
     std::map<std::string, std::string> merged_tags{};
     std::map<std::string, std::string>::iterator it;
 
@@ -230,15 +260,21 @@ void CommandMerge::merge_tags(std::unique_ptr<osmium::builder::NodeBuilder>& nod
             if (it == merged_tags.end()) {
                 merged_tags.insert({tag.key(), tag.value()});
             } else if (tag.value() != it->second) {
-                report_conflict("Locations are not equal");
-                node_builder.release();
-                return;
+                std::string conflict_details = "0002;n;";
+                conflict_details += std::to_string(duplicates[0].object().id());
+                conflict_details += ";";
+                conflict_details += std::to_string(duplicates[0].data_source_index());
+                conflict_details += ";";
+                conflict_details += tag.key();
+                conflict_details += ";";
+                conflict_details += std::to_string(duplicates[i].data_source_index());
+                report_conflict(conflict_details);
             }
         }
     }
 
     
-    osmium::builder::TagListBuilder builder{*node_builder};
+    osmium::builder::TagListBuilder builder{node_builder};
 
     for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
         builder.add_tag(it->first, it->second);
@@ -246,30 +282,30 @@ void CommandMerge::merge_tags(std::unique_ptr<osmium::builder::NodeBuilder>& nod
 }
 
 void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer) {
-    std::vector<const osmium::OSMObject*> deduplicated;
-    
+    // sort by version
+    struct {
+        bool operator()(QueueElement l, QueueElement r) const { return l.object().version() > r.object().version(); }
+    } compare_versions;
+
+    std::sort(duplicates.begin(), duplicates.end(), compare_versions);
+
+    // merge
     const osmium::OSMObject* first = &duplicates.front().object();
     
     if (first->type() == osmium::item_type::node) {
         osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
-        std::unique_ptr<osmium::builder::NodeBuilder> node_builder{new osmium::builder::NodeBuilder{buffer}};
+        osmium::builder::NodeBuilder node_builder{buffer};
 
-        merge_locations(node_builder, duplicates);
-        if (node_builder) {
-            merge_tags(node_builder, duplicates);
-        }
+        init_builder(node_builder, first);
+        report_conflict_on_versions(duplicates);
+        report_conflict_on_locations(duplicates);
+        merge_tags(node_builder, duplicates);
         
-        if (node_builder) {
-            (*writer)(buffer.get<osmium::Node>(buffer.commit()));
-        } else {
-            for(std::size_t i = 0; i < duplicates.size(); ++i) {
-                deduplicated.push_back(&duplicates[i].object());
-            }
-        }
-    }
-
-    for(std::size_t i = 0; i < deduplicated.size(); ++i) {
-        (*writer)(*deduplicated[i]);
+        (*writer)(buffer.get<osmium::Node>(buffer.commit()));
+    } else {
+        for(std::size_t i = 0; i < duplicates.size(); ++i) {
+            (*writer)(duplicates[i].object());
+        }   
     }
 }
 
