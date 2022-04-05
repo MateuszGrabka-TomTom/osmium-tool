@@ -223,6 +223,19 @@ void CommandMerge::init_way_builder(osmium::builder::WayBuilder& way_builder, co
     way_builder.add_item(way->nodes());
 }
 
+void CommandMerge::init_relation_builder(osmium::builder::RelationBuilder& relation_builder, const osmium::OSMObject* first) {
+    const osmium::Relation* relation = static_cast<const osmium::Relation*>(first);
+
+    relation_builder.set_id(relation->id());
+    relation_builder.set_visible(relation->visible());
+    relation_builder.set_version(relation->version());
+    relation_builder.set_changeset(relation->changeset());
+    relation_builder.set_uid(relation->uid());
+    relation_builder.set_timestamp(relation->timestamp());
+    relation_builder.set_user(relation->user());
+    relation_builder.add_item(relation->members());
+}
+
 void CommandMerge::report_conflict_on_versions(std::vector<QueueElement>& duplicates, const std::string& type) {
     const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
 
@@ -299,6 +312,43 @@ void CommandMerge::report_conflict_on_nodes_list(std::vector<QueueElement>& dupl
     }
 }
 
+bool are_equal(const osmium::RelationMemberList& left, const osmium::RelationMemberList& right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+
+    for (auto left_it = left.begin(); left_it != left.end(); ++left_it) {
+        for (auto right_it = right.begin(); right_it != right.end(); ++right_it) {
+            auto& left_member = *left_it;
+            auto& right_member = *right_it;
+
+            if (!(left_member.ref() == right_member.ref() && left_member.type() == right_member.type() && std::strcmp(left_member.role(), right_member.role()))) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+void CommandMerge::report_conflict_on_members_list(std::vector<QueueElement>& duplicates) {
+    const osmium::Relation* relation_0 = static_cast<const osmium::Relation*>(&duplicates[0].object());
+
+    for(std::size_t i = 1; i < duplicates.size(); ++i) {
+        const osmium::Relation* relation_i = static_cast<const osmium::Relation*>(&duplicates[i].object());  
+
+        if (relation_0->version() == relation_i->version() && !are_equal(relation_0->members(), relation_i->members())) {
+            std::string conflict_details = "001;r;";
+            conflict_details += std::to_string(relation_0->id());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[0].data_source_index());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[i].data_source_index());
+            report_conflict(conflict_details);
+        } 
+    }
+}
+
 std::map<std::string, std::string> CommandMerge::merge_tags(std::vector<QueueElement>& duplicates, const std::string& type) {
     std::map<std::string, std::string> merged_tags{};
     std::map<std::string, std::string>::iterator it;
@@ -355,6 +405,17 @@ void CommandMerge::merge_tags(osmium::builder::WayBuilder& way_builder, std::vec
     }
 }
 
+void CommandMerge::merge_tags(osmium::builder::RelationBuilder& relation_builder, std::vector<QueueElement>& duplicates, const std::string& type) {
+    std::map<std::string, std::string> merged_tags = merge_tags(duplicates, type);
+    std::map<std::string, std::string>::iterator it;
+
+    osmium::builder::TagListBuilder builder{relation_builder};
+
+    for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
+        builder.add_tag(it->first, it->second);
+    }
+}
+
 void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer) {
     // sort by version
     struct {
@@ -368,24 +429,34 @@ void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, 
     
     if (first->type() == osmium::item_type::node) {
         osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
-        osmium::builder::NodeBuilder node_builder{buffer};
+        osmium::builder::NodeBuilder builder{buffer};
 
-        init_node_builder(node_builder, first);
+        init_node_builder(builder, first);
         report_conflict_on_versions(duplicates, "n");
         report_conflict_on_locations(duplicates);
-        merge_tags(node_builder, duplicates, "n");
+        merge_tags(builder, duplicates, "n");
         
         (*writer)(buffer.get<osmium::Node>(buffer.commit()));
     } else if (first->type() == osmium::item_type::way) {
         osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
-        osmium::builder::WayBuilder way_builder{buffer};
+        osmium::builder::WayBuilder builder{buffer};
 
-        init_way_builder(way_builder, first);
+        init_way_builder(builder, first);
         report_conflict_on_versions(duplicates, "w");
         report_conflict_on_nodes_list(duplicates);
-        merge_tags(way_builder, duplicates, "w");
+        merge_tags(builder, duplicates, "w");
         
         (*writer)(buffer.get<osmium::Way>(buffer.commit()));
+    } else if (first->type() == osmium::item_type::relation) {
+        osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
+        osmium::builder::RelationBuilder builder{buffer};
+
+        init_relation_builder(builder, first);
+        report_conflict_on_versions(duplicates, "r");
+        report_conflict_on_members_list(duplicates);
+        merge_tags(builder, duplicates, "r");
+        
+        (*writer)(buffer.get<osmium::Relation>(buffer.commit()));
     } else {
         for(std::size_t i = 0; i < duplicates.size(); ++i) {
             (*writer)(duplicates[i].object());
