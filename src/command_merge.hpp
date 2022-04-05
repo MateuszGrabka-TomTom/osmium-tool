@@ -99,10 +99,14 @@ public:
         return "osmium merge [OPTIONS] OSM-FILE...";
     }
 
-    void init_builder(osmium::builder::NodeBuilder& node_builder, const osmium::OSMObject* first);
-    void report_conflict_on_versions(std::vector<QueueElement>& duplicates);
+    void init_node_builder(osmium::builder::NodeBuilder& node_builder, const osmium::OSMObject* first);
+    void init_way_builder(osmium::builder::WayBuilder& node_builder, const osmium::OSMObject* first);
+    void report_conflict_on_versions(std::vector<QueueElement>& duplicates, const std::string& type);
     void report_conflict_on_locations(std::vector<QueueElement>& duplicates);
-    void merge_tags(osmium::builder::NodeBuilder& node_builder, std::vector<QueueElement>& duplicates);
+    void report_conflict_on_nodes_list(std::vector<QueueElement>& duplicates);
+    std::map<std::string, std::string> merge_tags(std::vector<QueueElement>& duplicates, const std::string& type);
+    void merge_tags(osmium::builder::NodeBuilder& node_builder, std::vector<QueueElement>& duplicates, const std::string& type);
+    void merge_tags(osmium::builder::WayBuilder& way_builder, std::vector<QueueElement>& duplicates, const std::string& type);
     void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer);
 
 private:

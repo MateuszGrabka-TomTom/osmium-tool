@@ -37,6 +37,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <osmium/osm/entity_bits.hpp>
 #include <osmium/osm/object.hpp>
 #include <osmium/osm/node.hpp>
+#include <osmium/osm/way.hpp>
 #include <osmium/util/verbose_output.hpp>
 
 #include <boost/program_options.hpp>
@@ -196,7 +197,7 @@ namespace {
 
 } // anonymous namespace
 
-void CommandMerge::init_builder(osmium::builder::NodeBuilder& node_builder, const osmium::OSMObject* first) {
+void CommandMerge::init_node_builder(osmium::builder::NodeBuilder& node_builder, const osmium::OSMObject* first) {
     const osmium::Node* node = static_cast<const osmium::Node*>(first);
 
     node_builder.set_id(node->id());
@@ -209,14 +210,29 @@ void CommandMerge::init_builder(osmium::builder::NodeBuilder& node_builder, cons
     node_builder.set_user(node->user());
 }
 
-void CommandMerge::report_conflict_on_versions(std::vector<QueueElement>& duplicates) {
+void CommandMerge::init_way_builder(osmium::builder::WayBuilder& way_builder, const osmium::OSMObject* first) {
+    const osmium::Way* way = static_cast<const osmium::Way*>(first);
+
+    way_builder.set_id(way->id());
+    way_builder.set_visible(way->visible());
+    way_builder.set_version(way->version());
+    way_builder.set_changeset(way->changeset());
+    way_builder.set_uid(way->uid());
+    way_builder.set_timestamp(way->timestamp());
+    way_builder.set_user(way->user());
+    way_builder.add_item(way->nodes());
+}
+
+void CommandMerge::report_conflict_on_versions(std::vector<QueueElement>& duplicates, const std::string& type) {
     const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
 
     for(std::size_t i = 1; i < duplicates.size(); ++i) {
         const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
 
         if (node_0->version() != node_i->version()) {
-            std::string conflict_details = "003;n;";
+            std::string conflict_details = "003;";
+            conflict_details += type;
+            conflict_details += ";";
             conflict_details += std::to_string(node_0->id());
             conflict_details += ";";
             conflict_details += std::to_string(duplicates[0].data_source_index());
@@ -249,7 +265,41 @@ void CommandMerge::report_conflict_on_locations(std::vector<QueueElement>& dupli
     }
 }
 
-void CommandMerge::merge_tags(osmium::builder::NodeBuilder& node_builder, std::vector<QueueElement>& duplicates) {
+bool are_equal(const osmium::WayNodeList& left, const osmium::WayNodeList& right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+
+    for (auto left_it = left.begin(); left_it != left.end(); ++left_it) {
+        for (auto right_it = right.begin(); right_it != right.end(); ++right_it) {
+            if (*left_it != *right_it) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+void CommandMerge::report_conflict_on_nodes_list(std::vector<QueueElement>& duplicates) {
+    const osmium::Way* way_0 = static_cast<const osmium::Way*>(&duplicates[0].object());
+
+    for(std::size_t i = 1; i < duplicates.size(); ++i) {
+        const osmium::Way* way_i = static_cast<const osmium::Way*>(&duplicates[i].object());  
+
+        if (way_0->version() == way_i->version() && !are_equal(way_0->nodes(), way_i->nodes())) {
+            std::string conflict_details = "001;w;";
+            conflict_details += std::to_string(way_0->id());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[0].data_source_index());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[i].data_source_index());
+            report_conflict(conflict_details);
+        } 
+    }
+}
+
+std::map<std::string, std::string> CommandMerge::merge_tags(std::vector<QueueElement>& duplicates, const std::string& type) {
     std::map<std::string, std::string> merged_tags{};
     std::map<std::string, std::string>::iterator it;
 
@@ -265,7 +315,9 @@ void CommandMerge::merge_tags(osmium::builder::NodeBuilder& node_builder, std::v
             if (it == merged_tags.end()) {
                 merged_tags.insert({tag.key(), tag.value()});
             } else if (tag.value() != it->second) {
-                std::string conflict_details = "002;n;";
+                std::string conflict_details = "002;";
+                conflict_details += type;
+                conflict_details += ";";
                 conflict_details += std::to_string(duplicates[0].object().id());
                 conflict_details += ";";
                 conflict_details += std::to_string(duplicates[0].data_source_index());
@@ -278,8 +330,25 @@ void CommandMerge::merge_tags(osmium::builder::NodeBuilder& node_builder, std::v
         }
     }
 
-    
+    return merged_tags;
+}
+
+void CommandMerge::merge_tags(osmium::builder::NodeBuilder& node_builder, std::vector<QueueElement>& duplicates, const std::string& type) {
+    std::map<std::string, std::string> merged_tags = merge_tags(duplicates, type);
+    std::map<std::string, std::string>::iterator it;
+
     osmium::builder::TagListBuilder builder{node_builder};
+
+    for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
+        builder.add_tag(it->first, it->second);
+    }
+}
+
+void CommandMerge::merge_tags(osmium::builder::WayBuilder& way_builder, std::vector<QueueElement>& duplicates, const std::string& type) {
+    std::map<std::string, std::string> merged_tags = merge_tags(duplicates, type);
+    std::map<std::string, std::string>::iterator it;
+
+    osmium::builder::TagListBuilder builder{way_builder};
 
     for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
         builder.add_tag(it->first, it->second);
@@ -301,12 +370,22 @@ void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, 
         osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
         osmium::builder::NodeBuilder node_builder{buffer};
 
-        init_builder(node_builder, first);
-        report_conflict_on_versions(duplicates);
+        init_node_builder(node_builder, first);
+        report_conflict_on_versions(duplicates, "n");
         report_conflict_on_locations(duplicates);
-        merge_tags(node_builder, duplicates);
+        merge_tags(node_builder, duplicates, "n");
         
         (*writer)(buffer.get<osmium::Node>(buffer.commit()));
+    } else if (first->type() == osmium::item_type::way) {
+        osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
+        osmium::builder::WayBuilder way_builder{buffer};
+
+        init_way_builder(way_builder, first);
+        report_conflict_on_versions(duplicates, "w");
+        report_conflict_on_nodes_list(duplicates);
+        merge_tags(way_builder, duplicates, "w");
+        
+        (*writer)(buffer.get<osmium::Way>(buffer.commit()));
     } else {
         for(std::size_t i = 0; i < duplicates.size(); ++i) {
             (*writer)(duplicates[i].object());
