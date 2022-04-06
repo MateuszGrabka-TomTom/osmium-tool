@@ -99,9 +99,9 @@ public:
         return "osmium merge [OPTIONS] OSM-FILE...";
     }
 
-    void init_node_builder(osmium::builder::NodeBuilder& node_builder, const osmium::OSMObject* first);
-    void init_way_builder(osmium::builder::WayBuilder& node_builder, const osmium::OSMObject* first);
-    void init_relation_builder(osmium::builder::RelationBuilder& node_builder, const osmium::OSMObject* first);
+    void init_node_builder(osmium::builder::NodeBuilder& node_builder, const osmium::Node& node);
+    void init_way_builder(osmium::builder::WayBuilder& node_builder, const osmium::Way& way);
+    void init_relation_builder(osmium::builder::RelationBuilder& node_builder, const osmium::Relation& relation);
     void report_conflict_on_versions(std::vector<QueueElement>& duplicates, const std::string& type);
     void report_conflict_on_locations(std::vector<QueueElement>& duplicates);
     void report_conflict_on_nodes_list(std::vector<QueueElement>& duplicates);
