@@ -110,12 +110,12 @@ public:
     void merge_tags(osmium::builder::NodeBuilder& node_builder, std::vector<QueueElement>& duplicates, const std::string& type);
     void merge_tags(osmium::builder::WayBuilder& way_builder, std::vector<QueueElement>& duplicates, const std::string& type);
     void merge_tags(osmium::builder::RelationBuilder& relation_builder, std::vector<QueueElement>& duplicates, const std::string& type);
-    void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer* writer);
+    void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer& writer);
 
 private:
 
 
-    void report_conflict(std::string message) {
+    void report_conflict(const std::string& message) {
         if (!m_conflicts_output.empty() && !m_conflicts_output_cleaned_up) {
             std::ofstream log;
             log.open(m_conflicts_output, std::ios_base::trunc | std::ios_base::out);
