@@ -328,7 +328,7 @@ bool are_equal(const osmium::RelationMemberList& left, const osmium::RelationMem
         auto& left_member = *left_it;
         auto& right_member = *right_it;
 
-        if (!(left_member.ref() == right_member.ref() && left_member.type() == right_member.type() && std::strcmp(left_member.role(), right_member.role()))) {
+        if (!(left_member.ref() == right_member.ref() && left_member.type() == right_member.type() && std::strcmp(left_member.role(), right_member.role()) == 0)) {
             return false;
         }
 
