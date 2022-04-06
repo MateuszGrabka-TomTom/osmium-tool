@@ -283,12 +283,16 @@ bool are_equal(const osmium::WayNodeList& left, const osmium::WayNodeList& right
         return false;
     }
 
-    for (auto left_it = left.begin(); left_it != left.end(); ++left_it) {
-        for (auto right_it = right.begin(); right_it != right.end(); ++right_it) {
-            if (*left_it != *right_it) {
-                return false;
-            }
+    auto left_it = left.begin();
+    auto right_it = right.begin();
+
+    while(left_it != left.end()) {
+        if (*left_it != *right_it) {
+            return false;
         }
+
+        left_it++;
+        right_it++;
     }
 
     return true;
@@ -317,15 +321,19 @@ bool are_equal(const osmium::RelationMemberList& left, const osmium::RelationMem
         return false;
     }
 
-    for (auto left_it = left.begin(); left_it != left.end(); ++left_it) {
-        for (auto right_it = right.begin(); right_it != right.end(); ++right_it) {
-            auto& left_member = *left_it;
-            auto& right_member = *right_it;
+    auto left_it = left.begin();
+    auto right_it = right.begin();
 
-            if (!(left_member.ref() == right_member.ref() && left_member.type() == right_member.type() && std::strcmp(left_member.role(), right_member.role()))) {
-                return false;
-            }
+    while(left_it != left.end()) {
+        auto& left_member = *left_it;
+        auto& right_member = *right_it;
+
+        if (!(left_member.ref() == right_member.ref() && left_member.type() == right_member.type() && std::strcmp(left_member.role(), right_member.role()))) {
+            return false;
         }
+
+        left_it++;
+        right_it++;
     }
 
     return true;
