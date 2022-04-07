@@ -75,8 +75,9 @@ class CommandMerge : public CommandWithMultipleOSMInputs, public with_osm_output
 
     bool m_with_history = false;
     bool m_use_new_conflict_resolution_strategy = false;
-    std::string m_conflicts_output;
-    bool m_conflicts_output_cleaned_up = false;
+    std::ofstream m_conflicts_output;
+    std::string m_conflicts_output_file;
+
 
 
 public:
@@ -114,17 +115,7 @@ private:
 
 
     void report_conflict(const std::string& message) {
-        if (!m_conflicts_output.empty() && !m_conflicts_output_cleaned_up) {
-            std::ofstream log;
-            log.open(m_conflicts_output, std::ios_base::trunc | std::ios_base::out);
-            log.close();
-            m_conflicts_output_cleaned_up = true;
-        }
-
-        if (!m_conflicts_output.empty()) {
-            std::ofstream log(m_conflicts_output, std::ios_base::app | std::ios_base::out);
-            log << message << std::endl;
-        }
+        m_conflicts_output << message << std::endl;
     }
 
 }; // class CommandMerge

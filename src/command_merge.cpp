@@ -96,7 +96,7 @@ bool CommandMerge::setup(const std::vector<std::string>& arguments) {
     }
 
     if (vm.count("conflicts-output")) {
-        m_conflicts_output = vm["conflicts-output"].as<std::string>();
+        m_conflicts_output_file = vm["conflicts-output"].as<std::string>();
     }
     
     return true;
@@ -500,6 +500,7 @@ bool CommandMerge::run() {
         }
         
         if (m_use_new_conflict_resolution_strategy) {
+            m_conflicts_output.open(m_conflicts_output_file, std::ios_base::trunc | std::ios_base::out);
             report_conflict(index_to_data_source_log);
         }
 
@@ -532,12 +533,13 @@ bool CommandMerge::run() {
                     return sum + source.offset();
                 }));
             }
-        }
-
-        
+        }        
     }
 
     m_vout << "Closing output file...\n";
+    if (m_use_new_conflict_resolution_strategy) {
+        m_conflicts_output.close();
+    }
     writer.close();
 
     show_memory_used();
