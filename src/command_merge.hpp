@@ -107,9 +107,7 @@ public:
     void report_conflict_on_nodes_list(std::vector<QueueElement>& duplicates);
     void report_conflict_on_members_list(std::vector<QueueElement>& duplicates);
     std::map<std::string, std::string> merge_tags(std::vector<QueueElement>& duplicates, const std::string& type);
-    void merge_tags(osmium::builder::NodeBuilder& node_builder, std::vector<QueueElement>& duplicates, const std::string& type);
-    void merge_tags(osmium::builder::WayBuilder& way_builder, std::vector<QueueElement>& duplicates, const std::string& type);
-    void merge_tags(osmium::builder::RelationBuilder& relation_builder, std::vector<QueueElement>& duplicates, const std::string& type);
+    void add_tags(osmium::builder::TagListBuilder& builder, std::vector<QueueElement>& duplicates, const std::string& type);
     void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer& writer);
 
 private:

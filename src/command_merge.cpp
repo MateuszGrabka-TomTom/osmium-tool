@@ -385,33 +385,9 @@ std::map<std::string, std::string> CommandMerge::merge_tags(std::vector<QueueEle
     return merged_tags;
 }
 
-void CommandMerge::merge_tags(osmium::builder::NodeBuilder& node_builder, std::vector<QueueElement>& duplicates, const std::string& type) {
+void CommandMerge::add_tags(osmium::builder::TagListBuilder& builder, std::vector<QueueElement>& duplicates, const std::string& type) {
     std::map<std::string, std::string> merged_tags = merge_tags(duplicates, type);
     std::map<std::string, std::string>::iterator it;
-
-    osmium::builder::TagListBuilder builder{node_builder};
-
-    for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
-        builder.add_tag(it->first, it->second);
-    }
-}
-
-void CommandMerge::merge_tags(osmium::builder::WayBuilder& way_builder, std::vector<QueueElement>& duplicates, const std::string& type) {
-    std::map<std::string, std::string> merged_tags = merge_tags(duplicates, type);
-    std::map<std::string, std::string>::iterator it;
-
-    osmium::builder::TagListBuilder builder{way_builder};
-
-    for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
-        builder.add_tag(it->first, it->second);
-    }
-}
-
-void CommandMerge::merge_tags(osmium::builder::RelationBuilder& relation_builder, std::vector<QueueElement>& duplicates, const std::string& type) {
-    std::map<std::string, std::string> merged_tags = merge_tags(duplicates, type);
-    std::map<std::string, std::string>::iterator it;
-
-    osmium::builder::TagListBuilder builder{relation_builder};
 
     for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
         builder.add_tag(it->first, it->second);
@@ -435,37 +411,40 @@ void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, 
     switch(object.type()) {
         case osmium::item_type::node : {
             osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
-            osmium::builder::NodeBuilder builder{buffer};
-
-            init_node_builder(builder, static_cast<const osmium::Node&>(object));
             report_conflict_on_versions(duplicates, "n");
             report_conflict_on_locations(duplicates);
-            merge_tags(builder, duplicates, "n");
-            
+            {
+                osmium::builder::NodeBuilder builder{buffer};
+                init_node_builder(builder, static_cast<const osmium::Node&>(object));
+                osmium::builder::TagListBuilder tagbuilder{builder};
+                add_tags(tagbuilder, duplicates, "n");
+            }
             writer(buffer.get<osmium::Node>(buffer.commit()));
             break;
         }
         case osmium::item_type::way : {
             osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
-            osmium::builder::WayBuilder builder{buffer};
-
-            init_way_builder(builder, static_cast<const osmium::Way&>(object));
             report_conflict_on_versions(duplicates, "w");
             report_conflict_on_nodes_list(duplicates);
-            merge_tags(builder, duplicates, "w");
-            
+            {
+                osmium::builder::WayBuilder builder{buffer};
+                init_way_builder(builder, static_cast<const osmium::Way&>(object));
+                osmium::builder::TagListBuilder tagbuilder{builder};
+                add_tags(tagbuilder, duplicates, "n");
+            }
             writer(buffer.get<osmium::Way>(buffer.commit()));
             break;
         }
         case osmium::item_type::relation : {
             osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
-            osmium::builder::RelationBuilder builder{buffer};
-
-            init_relation_builder(builder, static_cast<const osmium::Relation&>(object));
             report_conflict_on_versions(duplicates, "r");
             report_conflict_on_members_list(duplicates);
-            merge_tags(builder, duplicates, "r");
-            
+            {
+                osmium::builder::RelationBuilder builder{buffer};
+                init_relation_builder(builder, static_cast<const osmium::Relation&>(object));
+                osmium::builder::TagListBuilder tagbuilder{builder};
+                add_tags(tagbuilder, duplicates, "n");
+            }
             writer(buffer.get<osmium::Relation>(buffer.commit()));
             break;
         }
