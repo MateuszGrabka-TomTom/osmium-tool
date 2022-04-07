@@ -75,8 +75,9 @@ class CommandMerge : public CommandWithMultipleOSMInputs, public with_osm_output
 
     bool m_with_history = false;
     bool m_use_new_conflict_resolution_strategy = false;
-    std::string m_conflicts_output;
-    bool m_conflicts_output_cleaned_up = false;
+    std::ofstream m_conflicts_output;
+    std::string m_conflicts_output_file;
+
 
 
 public:
@@ -99,34 +100,22 @@ public:
         return "osmium merge [OPTIONS] OSM-FILE...";
     }
 
-    void init_node_builder(osmium::builder::NodeBuilder& node_builder, const osmium::OSMObject* first);
-    void init_way_builder(osmium::builder::WayBuilder& node_builder, const osmium::OSMObject* first);
-    void init_relation_builder(osmium::builder::RelationBuilder& node_builder, const osmium::OSMObject* first);
+    void init_node_builder(osmium::builder::NodeBuilder& node_builder, const osmium::Node& node);
+    void init_way_builder(osmium::builder::WayBuilder& node_builder, const osmium::Way& way);
+    void init_relation_builder(osmium::builder::RelationBuilder& node_builder, const osmium::Relation& relation);
     void report_conflict_on_versions(std::vector<QueueElement>& duplicates, const std::string& type);
     void report_conflict_on_locations(std::vector<QueueElement>& duplicates);
     void report_conflict_on_nodes_list(std::vector<QueueElement>& duplicates);
     void report_conflict_on_members_list(std::vector<QueueElement>& duplicates);
     std::map<std::string, std::string> merge_tags(std::vector<QueueElement>& duplicates, const std::string& type);
-    void merge_tags(osmium::builder::NodeBuilder& node_builder, std::vector<QueueElement>& duplicates, const std::string& type);
-    void merge_tags(osmium::builder::WayBuilder& way_builder, std::vector<QueueElement>& duplicates, const std::string& type);
-    void merge_tags(osmium::builder::RelationBuilder& relation_builder, std::vector<QueueElement>& duplicates, const std::string& type);
+    void add_tags(osmium::builder::TagListBuilder& builder, std::vector<QueueElement>& duplicates, const std::string& type);
     void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer& writer);
 
 private:
 
 
     void report_conflict(const std::string& message) {
-        if (!m_conflicts_output.empty() && !m_conflicts_output_cleaned_up) {
-            std::ofstream log;
-            log.open(m_conflicts_output, std::ios_base::trunc | std::ios_base::out);
-            log.close();
-            m_conflicts_output_cleaned_up = true;
-        }
-
-        if (!m_conflicts_output.empty()) {
-            std::ofstream log(m_conflicts_output, std::ios_base::app | std::ios_base::out);
-            log << message << std::endl;
-        }
+        m_conflicts_output << message << std::endl;
     }
 
 }; // class CommandMerge
