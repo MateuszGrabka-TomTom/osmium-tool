@@ -402,6 +402,9 @@ void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, 
     // sort by version
     std::sort(duplicates.begin(), duplicates.end(), [](const QueueElement& l, const QueueElement& r) -> bool
         { 
+            if (l.object().version() == r.object().version()) {
+                return l.data_source_index() < r.data_source_index();
+            }
             return l.object().version() > r.object().version();
         });
 
