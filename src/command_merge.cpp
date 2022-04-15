@@ -90,7 +90,7 @@ bool CommandMerge::setup(const std::vector<std::string>& arguments) {
     if (vm.count("with-history")) {
         m_with_history = true;
     }
-    
+
     if (vm.count("new-conflict-resolution-strategy")) {
         m_use_new_conflict_resolution_strategy = true;
     }
@@ -98,7 +98,7 @@ bool CommandMerge::setup(const std::vector<std::string>& arguments) {
     if (vm.count("conflicts-output")) {
         m_conflicts_output_file = vm["conflicts-output"].as<std::string>();
     }
-    
+
     return true;
 }
 
@@ -231,45 +231,35 @@ void CommandMerge::init_relation_builder(osmium::builder::RelationBuilder& relat
 }
 
 void CommandMerge::report_conflict_on_versions(std::vector<QueueElement>& duplicates, const std::string& type) {
+    std::stringstream ss;
     const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
 
     for(std::size_t i = 1; i < duplicates.size(); ++i) {
-        const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
-
+        const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());
         if (node_0->version() != node_i->version()) {
-            std::string conflict_details = "003;";
-            conflict_details += type;
-            conflict_details += ";";
-            conflict_details += std::to_string(node_0->id());
-            conflict_details += ";";
-            conflict_details += std::to_string(duplicates[0].data_source_index());
-            conflict_details += ";";
-            conflict_details += std::to_string(duplicates[i].data_source_index());
-            conflict_details += ";";
-            conflict_details += std::to_string(node_0->version());
-            conflict_details += ";";
-            conflict_details += std::to_string(node_i->version());
-            report_conflict(conflict_details);
-        } 
+            ss << "003;" << type << ";" << std::to_string(node_0->id())
+               << ";" << std::to_string(duplicates[0].data_source_index())
+               << ";" << std::to_string(duplicates[i].data_source_index())
+               << ";" << std::to_string(node_0->version())
+               << ";" << std::to_string(node_i->version()) << '\n';
+        }
     }
+    report_conflict(ss);
 }
 
 void CommandMerge::report_conflict_on_locations(std::vector<QueueElement>& duplicates) {
+    std::stringstream ss;
     const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
 
     for(std::size_t i = 1; i < duplicates.size(); ++i) {
-        const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
-
+        const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());
         if (node_0->version() == node_i->version() && node_0->location() != node_i->location()) {
-            std::string conflict_details = "001;n;";
-            conflict_details += std::to_string(node_0->id());
-            conflict_details += ";";
-            conflict_details += std::to_string(duplicates[0].data_source_index());
-            conflict_details += ";";
-            conflict_details += std::to_string(duplicates[i].data_source_index());
-            report_conflict(conflict_details);
-        } 
+            ss << "001;n;" << std::to_string(node_0->id())
+               << ";" << std::to_string(duplicates[0].data_source_index())
+               << ";" << std::to_string(duplicates[i].data_source_index()) << '\n';
+        }
     }
+    report_conflict(ss);
 }
 
 bool are_equal(const osmium::WayNodeList& left, const osmium::WayNodeList& right) {
@@ -293,21 +283,19 @@ bool are_equal(const osmium::WayNodeList& left, const osmium::WayNodeList& right
 }
 
 void CommandMerge::report_conflict_on_nodes_list(std::vector<QueueElement>& duplicates) {
+    std::stringstream ss;
+
     const osmium::Way* way_0 = static_cast<const osmium::Way*>(&duplicates[0].object());
 
     for(std::size_t i = 1; i < duplicates.size(); ++i) {
-        const osmium::Way* way_i = static_cast<const osmium::Way*>(&duplicates[i].object());  
-
+        const osmium::Way* way_i = static_cast<const osmium::Way*>(&duplicates[i].object());
         if (way_0->version() == way_i->version() && !are_equal(way_0->nodes(), way_i->nodes())) {
-            std::string conflict_details = "001;w;";
-            conflict_details += std::to_string(way_0->id());
-            conflict_details += ";";
-            conflict_details += std::to_string(duplicates[0].data_source_index());
-            conflict_details += ";";
-            conflict_details += std::to_string(duplicates[i].data_source_index());
-            report_conflict(conflict_details);
-        } 
+            ss << "001;w;" << std::to_string(way_0->id())
+               << ";" << std::to_string(duplicates[0].data_source_index())
+               << ";" << std::to_string(duplicates[i].data_source_index()) << '\n';
+        }
     }
+    report_conflict(ss);
 }
 
 bool are_equal(const osmium::RelationMemberList& left, const osmium::RelationMemberList& right) {
@@ -334,27 +322,26 @@ bool are_equal(const osmium::RelationMemberList& left, const osmium::RelationMem
 }
 
 void CommandMerge::report_conflict_on_members_list(std::vector<QueueElement>& duplicates) {
+    std::stringstream ss;
+
     const osmium::Relation* relation_0 = static_cast<const osmium::Relation*>(&duplicates[0].object());
 
     for(std::size_t i = 1; i < duplicates.size(); ++i) {
-        const osmium::Relation* relation_i = static_cast<const osmium::Relation*>(&duplicates[i].object());  
-
+        const osmium::Relation* relation_i = static_cast<const osmium::Relation*>(&duplicates[i].object());
         if (relation_0->version() == relation_i->version() && !are_equal(relation_0->members(), relation_i->members())) {
-            std::string conflict_details = "001;r;";
-            conflict_details += std::to_string(relation_0->id());
-            conflict_details += ";";
-            conflict_details += std::to_string(duplicates[0].data_source_index());
-            conflict_details += ";";
-            conflict_details += std::to_string(duplicates[i].data_source_index());
-            report_conflict(conflict_details);
-        } 
+            ss << "001;r;" << std::to_string(relation_0->id())
+               << ";" << std::to_string(duplicates[0].data_source_index())
+               << ";" << std::to_string(duplicates[i].data_source_index()) << '\n';
+        }
     }
+    report_conflict(ss);
+
 }
 
-std::map<std::string, std::string> CommandMerge::merge_tags(std::vector<QueueElement>& duplicates, const std::string& type) {
+void CommandMerge::merge_tags(osmium::builder::TagListBuilder& builder, std::vector<QueueElement>& duplicates, const std::string& type) {
     std::map<std::string, std::string> merged_tags{};
     std::map<std::string, std::string>::iterator it;
-
+    std::stringstream ss;
     for(std::size_t i = 0; i < duplicates.size(); ++i) {
         const osmium::TagList& tags = duplicates[i].object().tags();
 
@@ -363,35 +350,25 @@ std::map<std::string, std::string> CommandMerge::merge_tags(std::vector<QueueEle
 
             std::string key = tag.key();
             it = merged_tags.find(key);
-            
+
             if (it == merged_tags.end()) {
                 merged_tags.insert({tag.key(), tag.value()});
             } else if (tag.value() != it->second) {
-                std::string conflict_details = "002;";
-                conflict_details += type;
-                conflict_details += ";";
-                conflict_details += std::to_string(duplicates[0].object().id());
-                conflict_details += ";";
-                conflict_details += std::to_string(duplicates[0].data_source_index());
-                conflict_details += ";";
-                conflict_details += std::to_string(duplicates[i].data_source_index());
-                conflict_details += ";";
-                conflict_details += tag.key();
-                report_conflict(conflict_details);
+                ss << "002;" << type << ";" << std::to_string(duplicates[0].object().id())
+                   << ";" << std::to_string(duplicates[0].data_source_index())
+                   << ";" << std::to_string(duplicates[i].data_source_index())
+                   << ";" << tag.key() << '\n';
             }
         }
     }
-
-    return merged_tags;
+    report_conflict(ss);
+    for (auto it = merged_tags.begin(); it != merged_tags.end(); it++) {
+        builder.add_tag(it->first, it->second);
+    }
 }
 
 void CommandMerge::add_tags(osmium::builder::TagListBuilder& builder, std::vector<QueueElement>& duplicates, const std::string& type) {
-    std::map<std::string, std::string> merged_tags = merge_tags(duplicates, type);
-    std::map<std::string, std::string>::iterator it;
-
-    for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
-        builder.add_tag(it->first, it->second);
-    }
+    merge_tags(builder, duplicates, type);
 }
 
 void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer& writer) {
@@ -401,7 +378,7 @@ void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, 
     }
     // sort by version
     std::sort(duplicates.begin(), duplicates.end(), [](const QueueElement& l, const QueueElement& r) -> bool
-        { 
+        {
             if (l.object().version() == r.object().version()) {
                 return l.data_source_index() < r.data_source_index();
             }
@@ -410,10 +387,9 @@ void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, 
 
     // merge
     const osmium::OSMObject& object = duplicates.front().object();
-    
+    osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
     switch(object.type()) {
         case osmium::item_type::node : {
-            osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
             report_conflict_on_versions(duplicates, "n");
             report_conflict_on_locations(duplicates);
             {
@@ -426,7 +402,6 @@ void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, 
             break;
         }
         case osmium::item_type::way : {
-            osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
             report_conflict_on_versions(duplicates, "w");
             report_conflict_on_nodes_list(duplicates);
             {
@@ -439,7 +414,6 @@ void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, 
             break;
         }
         case osmium::item_type::relation : {
-            osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
             report_conflict_on_versions(duplicates, "r");
             report_conflict_on_members_list(duplicates);
             {
@@ -454,7 +428,7 @@ void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, 
         default : { // is this even possible?
             for(std::size_t i = 0; i < duplicates.size(); ++i) {
                 writer(duplicates[i].object());
-            }   
+            }
             break;
         }
     }
@@ -480,18 +454,15 @@ bool CommandMerge::run() {
         data_sources.reserve(m_input_files.size());
 
         std::priority_queue<QueueElement> queue;
-
-        std::string index_to_data_source_log;
+        std::stringstream index_to_data_source_log;
 
         int index = 0;
         for (const osmium::io::File& file : m_input_files) {
             if (index != 0) {
-                index_to_data_source_log += ";";
+                index_to_data_source_log << ";";
             }
 
-            index_to_data_source_log += std::to_string(index);
-            index_to_data_source_log += ";";
-            index_to_data_source_log += file.filename();
+            index_to_data_source_log << std::to_string(index) << ";" << file.filename();
 
             data_sources.emplace_back(file, m_with_history);
 
@@ -501,8 +472,12 @@ bool CommandMerge::run() {
 
             ++index;
         }
-        
+        index_to_data_source_log << '\n';
+
         if (m_use_new_conflict_resolution_strategy) {
+            size_t m_conflicts_buf_size = 128UL * 1024UL * 1024UL; // 128MB buffer for conflict file-writes
+            std::vector<char> vec(m_conflicts_buf_size);
+            m_conflicts_output.rdbuf()->pubsetbuf(&vec.front(), m_conflicts_buf_size);
             m_conflicts_output.open(m_conflicts_output_file, std::ios_base::trunc | std::ios_base::out);
             report_conflict(index_to_data_source_log);
         }
@@ -519,7 +494,7 @@ bool CommandMerge::run() {
 
             if (!m_use_new_conflict_resolution_strategy || queue.empty() || obj.id() != queue.top().object().id() || obj.type() != queue.top().object().type()) {
                 deduplicate_and_write(duplicates, writer);
-                
+
                 for(const auto& duplicate : duplicates) {
                     const int index = duplicate.data_source_index();
                     if (data_sources[index].next()) {
@@ -529,18 +504,19 @@ bool CommandMerge::run() {
 
                 duplicates.clear();
             }
-        
+
             if (n++ > 10000) {
                 n = 0;
                 progress_bar.update(std::accumulate(data_sources.cbegin(), data_sources.cend(), static_cast<std::size_t>(0), [](std::size_t sum, const DataSource& source){
                     return sum + source.offset();
                 }));
             }
-        }        
+        }
     }
 
     m_vout << "Closing output file...\n";
     if (m_use_new_conflict_resolution_strategy) {
+        m_conflicts_output.flush();
         m_conflicts_output.close();
     }
     writer.close();
@@ -550,4 +526,3 @@ bool CommandMerge::run() {
 
     return true;
 }
-
