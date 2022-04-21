@@ -32,6 +32,7 @@ class CommandCheckRefs : public CommandWithSingleOSMInput {
 
     bool m_show_ids = false;
     bool m_check_relations = false;
+    bool m_print_duplicates = false;
 
 public:
 

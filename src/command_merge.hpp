@@ -25,12 +25,60 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #include "cmd.hpp" // IWYU pragma: export
 
+#include <osmium/builder/osm_object_builder.hpp>
+#include <osmium/osm/node.hpp>
+#include <osmium/io/writer.hpp>
+
+#include <iostream>
+#include <fstream>
 #include <string>
 #include <vector>
+#include <stdio.h>
+
+namespace {
+    class QueueElement {
+
+        const osmium::OSMObject* m_object;
+        int m_data_source_index;
+
+    public:
+
+        QueueElement(const osmium::OSMObject* object, int data_source_index) noexcept :
+            m_object(object),
+            m_data_source_index(data_source_index) {
+        }
+
+        const osmium::OSMObject& object() const noexcept {
+            return *m_object;
+        }
+
+        int data_source_index() const noexcept {
+            return m_data_source_index;
+        }
+
+    }; // QueueElement
+
+    bool operator<(const QueueElement& lhs, const QueueElement& rhs) noexcept {
+        return lhs.object() > rhs.object();
+    }
+
+    bool operator==(const QueueElement& lhs, const QueueElement& rhs) noexcept {
+        return lhs.object() == rhs.object();
+    }
+
+    bool operator!=(const QueueElement& lhs, const QueueElement& rhs) noexcept {
+        return !(lhs == rhs);
+    }
+}
 
 class CommandMerge : public CommandWithMultipleOSMInputs, public with_osm_output {
 
     bool m_with_history = false;
+    bool m_use_new_conflict_resolution_strategy = false;
+    std::ofstream m_conflicts_output;
+    std::string m_conflicts_output_file;
+
+
 
 public:
 
@@ -50,6 +98,24 @@ public:
 
     const char* synopsis() const noexcept override final {
         return "osmium merge [OPTIONS] OSM-FILE...";
+    }
+
+    void init_node_builder(osmium::builder::NodeBuilder& node_builder, const osmium::Node& node);
+    void init_way_builder(osmium::builder::WayBuilder& node_builder, const osmium::Way& way);
+    void init_relation_builder(osmium::builder::RelationBuilder& node_builder, const osmium::Relation& relation);
+    void report_conflict_on_versions(std::vector<QueueElement>& duplicates, const std::string& type);
+    void report_conflict_on_locations(std::vector<QueueElement>& duplicates);
+    void report_conflict_on_nodes_list(std::vector<QueueElement>& duplicates);
+    void report_conflict_on_members_list(std::vector<QueueElement>& duplicates);
+    std::map<std::string, std::string> merge_tags(std::vector<QueueElement>& duplicates, const std::string& type);
+    void add_tags(osmium::builder::TagListBuilder& builder, std::vector<QueueElement>& duplicates, const std::string& type);
+    void deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer& writer);
+
+private:
+
+
+    void report_conflict(const std::string& message) {
+        m_conflicts_output << message << std::endl;
     }
 
 }; // class CommandMerge

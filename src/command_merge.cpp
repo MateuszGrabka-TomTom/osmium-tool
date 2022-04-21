@@ -25,6 +25,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include "exception.hpp"
 #include "util.hpp"
 
+#include <osmium/builder/osm_object_builder.hpp>
 #include <osmium/io/file.hpp>
 #include <osmium/io/header.hpp>
 #include <osmium/io/input_iterator.hpp>
@@ -35,6 +36,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #include <osmium/memory/buffer.hpp>
 #include <osmium/osm/entity_bits.hpp>
 #include <osmium/osm/object.hpp>
+#include <osmium/osm/node.hpp>
+#include <osmium/osm/way.hpp>
 #include <osmium/util/verbose_output.hpp>
 
 #include <boost/program_options.hpp>
@@ -51,6 +54,8 @@ bool CommandMerge::setup(const std::vector<std::string>& arguments) {
     po::options_description opts_cmd{"COMMAND OPTIONS"};
     opts_cmd.add_options()
     ("with-history,H", "Do not warn about input files with multiple object versions")
+    ("conflicts-output,C", po::value<std::string>(), "Report conflicts to the given output")
+    ("new-conflict-resolution-strategy,N", "Use new conflict resolution strategy")
     ;
 
     po::options_description opts_common{add_common_options()};
@@ -85,7 +90,15 @@ bool CommandMerge::setup(const std::vector<std::string>& arguments) {
     if (vm.count("with-history")) {
         m_with_history = true;
     }
+    
+    if (vm.count("new-conflict-resolution-strategy")) {
+        m_use_new_conflict_resolution_strategy = true;
+    }
 
+    if (vm.count("conflicts-output")) {
+        m_conflicts_output_file = vm["conflicts-output"].as<std::string>();
+    }
+    
     return true;
 }
 
@@ -182,41 +195,270 @@ namespace {
 
     }; // DataSource
 
-    class QueueElement {
-
-        const osmium::OSMObject* m_object;
-        int m_data_source_index;
-
-    public:
-
-        QueueElement(const osmium::OSMObject* object, int data_source_index) noexcept :
-            m_object(object),
-            m_data_source_index(data_source_index) {
-        }
-
-        const osmium::OSMObject& object() const noexcept {
-            return *m_object;
-        }
-
-        int data_source_index() const noexcept {
-            return m_data_source_index;
-        }
-
-    }; // QueueElement
-
-    bool operator<(const QueueElement& lhs, const QueueElement& rhs) noexcept {
-        return lhs.object() > rhs.object();
-    }
-
-    bool operator==(const QueueElement& lhs, const QueueElement& rhs) noexcept {
-        return lhs.object() == rhs.object();
-    }
-
-    bool operator!=(const QueueElement& lhs, const QueueElement& rhs) noexcept {
-        return !(lhs == rhs);
-    }
-
 } // anonymous namespace
+
+void CommandMerge::init_node_builder(osmium::builder::NodeBuilder& node_builder, const osmium::Node& node) {
+    node_builder.set_id(node.id());
+    node_builder.set_visible(node.visible());
+    node_builder.set_version(node.version());
+    node_builder.set_changeset(node.changeset());
+    node_builder.set_uid(node.uid());
+    node_builder.set_timestamp(node.timestamp());
+    node_builder.set_location(node.location());
+    node_builder.set_user(node.user());
+}
+
+void CommandMerge::init_way_builder(osmium::builder::WayBuilder& way_builder, const osmium::Way& way) {
+    way_builder.set_id(way.id());
+    way_builder.set_visible(way.visible());
+    way_builder.set_version(way.version());
+    way_builder.set_changeset(way.changeset());
+    way_builder.set_uid(way.uid());
+    way_builder.set_timestamp(way.timestamp());
+    way_builder.set_user(way.user());
+    way_builder.add_item(way.nodes());
+}
+
+void CommandMerge::init_relation_builder(osmium::builder::RelationBuilder& relation_builder, const osmium::Relation& relation) {
+    relation_builder.set_id(relation.id());
+    relation_builder.set_visible(relation.visible());
+    relation_builder.set_version(relation.version());
+    relation_builder.set_changeset(relation.changeset());
+    relation_builder.set_uid(relation.uid());
+    relation_builder.set_timestamp(relation.timestamp());
+    relation_builder.set_user(relation.user());
+    relation_builder.add_item(relation.members());
+}
+
+void CommandMerge::report_conflict_on_versions(std::vector<QueueElement>& duplicates, const std::string& type) {
+    const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
+
+    for(std::size_t i = 1; i < duplicates.size(); ++i) {
+        const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
+
+        if (node_0->version() != node_i->version()) {
+            std::string conflict_details = "003;";
+            conflict_details += type;
+            conflict_details += ";";
+            conflict_details += std::to_string(node_0->id());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[0].data_source_index());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[i].data_source_index());
+            conflict_details += ";";
+            conflict_details += std::to_string(node_0->version());
+            conflict_details += ";";
+            conflict_details += std::to_string(node_i->version());
+            report_conflict(conflict_details);
+        } 
+    }
+}
+
+void CommandMerge::report_conflict_on_locations(std::vector<QueueElement>& duplicates) {
+    const osmium::Node* node_0 = static_cast<const osmium::Node*>(&duplicates[0].object());
+
+    for(std::size_t i = 1; i < duplicates.size(); ++i) {
+        const osmium::Node* node_i = static_cast<const osmium::Node*>(&duplicates[i].object());  
+
+        if (node_0->version() == node_i->version() && node_0->location() != node_i->location()) {
+            std::string conflict_details = "001;n;";
+            conflict_details += std::to_string(node_0->id());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[0].data_source_index());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[i].data_source_index());
+            report_conflict(conflict_details);
+        } 
+    }
+}
+
+bool are_equal(const osmium::WayNodeList& left, const osmium::WayNodeList& right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+
+    auto left_it = left.begin();
+    auto right_it = right.begin();
+
+    while(left_it != left.end()) {
+        if (*left_it != *right_it) {
+            return false;
+        }
+
+        left_it++;
+        right_it++;
+    }
+
+    return true;
+}
+
+void CommandMerge::report_conflict_on_nodes_list(std::vector<QueueElement>& duplicates) {
+    const osmium::Way* way_0 = static_cast<const osmium::Way*>(&duplicates[0].object());
+
+    for(std::size_t i = 1; i < duplicates.size(); ++i) {
+        const osmium::Way* way_i = static_cast<const osmium::Way*>(&duplicates[i].object());  
+
+        if (way_0->version() == way_i->version() && !are_equal(way_0->nodes(), way_i->nodes())) {
+            std::string conflict_details = "001;w;";
+            conflict_details += std::to_string(way_0->id());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[0].data_source_index());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[i].data_source_index());
+            report_conflict(conflict_details);
+        } 
+    }
+}
+
+bool are_equal(const osmium::RelationMemberList& left, const osmium::RelationMemberList& right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+
+    auto left_it = left.begin();
+    auto right_it = right.begin();
+
+    while(left_it != left.end()) {
+        auto& left_member = *left_it;
+        auto& right_member = *right_it;
+
+        if (!(left_member.ref() == right_member.ref() && left_member.type() == right_member.type() && std::strcmp(left_member.role(), right_member.role()) == 0)) {
+            return false;
+        }
+
+        left_it++;
+        right_it++;
+    }
+
+    return true;
+}
+
+void CommandMerge::report_conflict_on_members_list(std::vector<QueueElement>& duplicates) {
+    const osmium::Relation* relation_0 = static_cast<const osmium::Relation*>(&duplicates[0].object());
+
+    for(std::size_t i = 1; i < duplicates.size(); ++i) {
+        const osmium::Relation* relation_i = static_cast<const osmium::Relation*>(&duplicates[i].object());  
+
+        if (relation_0->version() == relation_i->version() && !are_equal(relation_0->members(), relation_i->members())) {
+            std::string conflict_details = "001;r;";
+            conflict_details += std::to_string(relation_0->id());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[0].data_source_index());
+            conflict_details += ";";
+            conflict_details += std::to_string(duplicates[i].data_source_index());
+            report_conflict(conflict_details);
+        } 
+    }
+}
+
+std::map<std::string, std::string> CommandMerge::merge_tags(std::vector<QueueElement>& duplicates, const std::string& type) {
+    std::map<std::string, std::string> merged_tags{};
+    std::map<std::string, std::string>::iterator it;
+
+    for(std::size_t i = 0; i < duplicates.size(); ++i) {
+        const osmium::TagList& tags = duplicates[i].object().tags();
+
+        for (auto tag_it = tags.begin(); tag_it != tags.end(); ++tag_it) {
+            const osmium::Tag& tag = *tag_it;
+
+            std::string key = tag.key();
+            it = merged_tags.find(key);
+            
+            if (it == merged_tags.end()) {
+                merged_tags.insert({tag.key(), tag.value()});
+            } else if (tag.value() != it->second) {
+                std::string conflict_details = "002;";
+                conflict_details += type;
+                conflict_details += ";";
+                conflict_details += std::to_string(duplicates[0].object().id());
+                conflict_details += ";";
+                conflict_details += std::to_string(duplicates[0].data_source_index());
+                conflict_details += ";";
+                conflict_details += std::to_string(duplicates[i].data_source_index());
+                conflict_details += ";";
+                conflict_details += tag.key();
+                report_conflict(conflict_details);
+            }
+        }
+    }
+
+    return merged_tags;
+}
+
+void CommandMerge::add_tags(osmium::builder::TagListBuilder& builder, std::vector<QueueElement>& duplicates, const std::string& type) {
+    std::map<std::string, std::string> merged_tags = merge_tags(duplicates, type);
+    std::map<std::string, std::string>::iterator it;
+
+    for (it = merged_tags.begin(); it != merged_tags.end(); it++) {
+        builder.add_tag(it->first, it->second);
+    }
+}
+
+void CommandMerge::deduplicate_and_write(std::vector<QueueElement>& duplicates, osmium::io::Writer& writer) {
+    if (duplicates.size() == 1) {
+        writer(duplicates[0].object());
+        return;
+    }
+    // sort by version
+    std::sort(duplicates.begin(), duplicates.end(), [](const QueueElement& l, const QueueElement& r) -> bool
+        { 
+            if (l.object().version() == r.object().version()) {
+                return l.data_source_index() < r.data_source_index();
+            }
+            return l.object().version() > r.object().version();
+        });
+
+    // merge
+    const osmium::OSMObject& object = duplicates.front().object();
+    
+    switch(object.type()) {
+        case osmium::item_type::node : {
+            osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
+            report_conflict_on_versions(duplicates, "n");
+            report_conflict_on_locations(duplicates);
+            {
+                osmium::builder::NodeBuilder builder{buffer};
+                init_node_builder(builder, static_cast<const osmium::Node&>(object));
+                osmium::builder::TagListBuilder tagbuilder{builder};
+                add_tags(tagbuilder, duplicates, "n");
+            }
+            writer(buffer.get<osmium::Node>(buffer.commit()));
+            break;
+        }
+        case osmium::item_type::way : {
+            osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
+            report_conflict_on_versions(duplicates, "w");
+            report_conflict_on_nodes_list(duplicates);
+            {
+                osmium::builder::WayBuilder builder{buffer};
+                init_way_builder(builder, static_cast<const osmium::Way&>(object));
+                osmium::builder::TagListBuilder tagbuilder{builder};
+                add_tags(tagbuilder, duplicates, "n");
+            }
+            writer(buffer.get<osmium::Way>(buffer.commit()));
+            break;
+        }
+        case osmium::item_type::relation : {
+            osmium::memory::Buffer buffer{1024, osmium::memory::Buffer::auto_grow::yes};
+            report_conflict_on_versions(duplicates, "r");
+            report_conflict_on_members_list(duplicates);
+            {
+                osmium::builder::RelationBuilder builder{buffer};
+                init_relation_builder(builder, static_cast<const osmium::Relation&>(object));
+                osmium::builder::TagListBuilder tagbuilder{builder};
+                add_tags(tagbuilder, duplicates, "n");
+            }
+            writer(buffer.get<osmium::Relation>(buffer.commit()));
+            break;
+        }
+        default : { // is this even possible?
+            for(std::size_t i = 0; i < duplicates.size(); ++i) {
+                writer(duplicates[i].object());
+            }   
+            break;
+        }
+    }
+}
 
 bool CommandMerge::run() {
     m_vout << "Opening output file...\n";
@@ -239,8 +481,18 @@ bool CommandMerge::run() {
 
         std::priority_queue<QueueElement> queue;
 
+        std::string index_to_data_source_log;
+
         int index = 0;
         for (const osmium::io::File& file : m_input_files) {
+            if (index != 0) {
+                index_to_data_source_log += ";";
+            }
+
+            index_to_data_source_log += std::to_string(index);
+            index_to_data_source_log += ";";
+            index_to_data_source_log += file.filename();
+
             data_sources.emplace_back(file, m_with_history);
 
             if (!data_sources.back().empty()) {
@@ -249,30 +501,48 @@ bool CommandMerge::run() {
 
             ++index;
         }
+        
+        if (m_use_new_conflict_resolution_strategy) {
+            m_conflicts_output.open(m_conflicts_output_file, std::ios_base::trunc | std::ios_base::out);
+            report_conflict(index_to_data_source_log);
+        }
+
+        std::vector<QueueElement> duplicates;
 
         int n = 0;
         while (!queue.empty()) {
             const auto element = queue.top();
             queue.pop();
-            if (queue.empty() || element != queue.top()) {
-                writer(element.object());
-            }
 
-            const int index = element.data_source_index();
-            if (data_sources[index].next()) {
-                queue.emplace(data_sources[index].get(), index);
-            }
+            const osmium::OSMObject& obj = element.object();
+            duplicates.push_back(element);
 
+            if (!m_use_new_conflict_resolution_strategy || queue.empty() || obj.id() != queue.top().object().id() || obj.type() != queue.top().object().type()) {
+                deduplicate_and_write(duplicates, writer);
+                
+                for(const auto& duplicate : duplicates) {
+                    const int index = duplicate.data_source_index();
+                    if (data_sources[index].next()) {
+                        queue.emplace(data_sources[index].get(), index);
+                    }
+                }
+
+                duplicates.clear();
+            }
+        
             if (n++ > 10000) {
                 n = 0;
                 progress_bar.update(std::accumulate(data_sources.cbegin(), data_sources.cend(), static_cast<std::size_t>(0), [](std::size_t sum, const DataSource& source){
                     return sum + source.offset();
                 }));
             }
-        }
+        }        
     }
 
     m_vout << "Closing output file...\n";
+    if (m_use_new_conflict_resolution_strategy) {
+        m_conflicts_output.close();
+    }
     writer.close();
 
     show_memory_used();
